@@ -1,0 +1,10 @@
+node_modules/
+.otium*/
+review/
+jobs.json
+profile.json
+confirmed.json
+.env*
+*.pdf
+*.docx
+.DS_Store
