@@ -57,7 +57,7 @@ async function fillPage(page, profile, job, freeze, settleMs) {
   const counts = new Map();
   const identity = f => JSON.stringify([f.label, f.name, f.type]);
   for (const f of initial) counts.set(identity(f), (counts.get(identity(f)) || 0) + 1);
-  const filled = new Map(), reasons = new Map();
+  const filled = new Map(), attempted = new Set(), reasons = new Map();
   const describe = f => ({ label: f.label || 'Unlabeled field', required: f.required });
   for (const f of initial.slice(0, 150)) {
     if (f.populated) continue;
@@ -78,9 +78,11 @@ async function fillPage(page, profile, job, freeze, settleMs) {
         const options = current.options.filter(o => normalize(o.label) === normalize(value) || normalize(o.value) === normalize(value));
         if (options.length !== 1) { skip('no_unique_option'); continue; }
         expected = options[0].value;
+        attempted.add(key);
         await field.selectOption({ value: expected }, { timeout: 900 });
       } else {
         if (typeof answer.value !== 'string') { skip('manual_control'); continue; }
+        attempted.add(key);
         await field.fill(value, { timeout: 900 });
       }
       if (await field.inputValue({ timeout: 900 }) === expected) filled.set(key, expected);
@@ -90,15 +92,19 @@ async function fillPage(page, profile, job, freeze, settleMs) {
   if (page.url() !== scannedUrl) throw Error('page_changed');
   const final = await elements.evaluateAll(snapshot);
   const required = final.filter(f => f.required && !f.disabled);
-  const complete = required.filter(f => f.populated && f.valid).length;
-  const verified = [];
+  const verified = [], verifiedKeys = new Set();
   for (const f of final) {
     const expected = filled.get(identity(f));
     if (expected === undefined || !f.valid) continue;
-    if (await elements.nth(f.index).inputValue({ timeout: 900 }).catch(() => null) === expected) verified.push(describe(f));
+    if (await elements.nth(f.index).inputValue({ timeout: 900 }).catch(() => null) === expected) {
+      verified.push(describe(f));
+      verifiedKeys.add(identity(f));
+    }
   }
+  const failedFill = f => attempted.has(identity(f)) && !verifiedKeys.has(identity(f));
+  const complete = required.filter(f => f.populated && f.valid && !failedFill(f)).length;
   return { status: 'review', filled: verified,
-    missing: final.filter(f => !f.disabled && (!f.populated || !f.valid)).map(f => ({ ...describe(f), reason: !f.valid && f.populated ? 'invalid_value' : reasons.get(identity(f)) || 'manual_review' })),
+    missing: final.filter(f => !f.disabled && (!f.populated || !f.valid || failedFill(f))).map(f => ({ ...describe(f), reason: !f.valid && f.populated ? 'invalid_value' : reasons.get(identity(f)) || (failedFill(f) ? 'value_changed_after_fill' : 'manual_review') })),
     requiredTotal: required.length, requiredComplete: complete, coverage: required.length ? 100 * complete / required.length : null };
 }
 
