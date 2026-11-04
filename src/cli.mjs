@@ -11,7 +11,7 @@ import { runBatch } from './run.mjs';
 const readJson = async path => JSON.parse(await readFile(path, 'utf8'));
 const record = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const usage = `Otium · prepare job applications for review
-npm start -- --jobs jobs.json --profile profile.json [--out review] [--session .otium-browser] [--concurrency 2] [--channel chrome] [--headless]
+npm start -- --jobs jobs.json --profile profile.json [--resume /path/to/resume.pdf] [--out review] [--session .otium-browser] [--concurrency 2] [--channel chrome] [--headless]
 npm start -- learn --profile profile.json --confirmed confirmed.json`;
 
 async function main() {
@@ -20,7 +20,7 @@ async function main() {
   const { values: args } = parseArgs({ args: learn ? argv.slice(1) : argv, options: {
     jobs: { type: 'string' }, profile: { type: 'string' }, out: { type: 'string', default: 'review' },
     session: { type: 'string', default: '.otium-browser' }, concurrency: { type: 'string', default: '2' },
-    headless: { type: 'boolean' }, channel: { type: 'string' }, confirmed: { type: 'string' }, help: { type: 'boolean', short: 'h' },
+    headless: { type: 'boolean' }, channel: { type: 'string' }, confirmed: { type: 'string' }, resume: { type: 'string' }, help: { type: 'boolean', short: 'h' },
   } });
   if (args.help) return console.log(usage);
   if (!args.profile) throw Error('Supply --profile profile.json.');
@@ -50,6 +50,9 @@ async function main() {
   if (args.channel !== undefined && args.channel !== 'chrome') throw Error('The only supported alternate browser channel is chrome.');
   if (!args.headless && !process.stdin.isTTY) throw Error('Run in an interactive terminal for browser handoff, or use --headless for a report only.');
   const jobs = parseJobs(await readJson(args.jobs));
+  const credentials = Object.fromEntries(jobs.filter(j => j.credentialEnv).map(j => [j.id, {
+    email: process.env[j.credentialEnv + '_EMAIL'], password: process.env[j.credentialEnv + '_PASSWORD'],
+  }]));
   const concurrency = Number(args.concurrency);
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 5) throw Error('Concurrency must be an integer from 1 to 5.');
   const outDir = resolve(args.out, new Date().toISOString().replace(/[:.]/g, '-') + '-' + randomUUID().slice(0, 8));
@@ -64,7 +67,7 @@ async function main() {
     const tabs = context.pages();
     const done = new Promise(resolve => context.once('close', resolve));
     console.log(`Preparing ${jobs.length} application(s). Pages may remain incomplete.`);
-    const { results, releaseForReview } = await runBatch({ jobs, profile, context, concurrency, outDir });
+    const { results, releaseForReview } = await runBatch({ jobs, profile, context, credentials, resumePath: args.resume ? resolve(args.resume) : undefined, concurrency, outDir });
     for (const tab of tabs) if (tab.url() === 'about:blank') await tab.close();
     const reviewable = results.filter(job => job.status === 'review').length;
     console.log(`${reviewable}/${results.length} forms ready to review. Report: ${resolve(outDir, 'report.html')}`);

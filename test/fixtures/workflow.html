@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Staged application fixture</title></head>
+<body>
+  <main id="stage">
+    <label>Account email <input id="login-user" type="email" required></label>
+    <label>Password <input id="login-password" type="password" required></label>
+    <button id="login" type="button">Sign in</button>
+  </main>
+  <script>
+    const stage = document.querySelector('#stage');
+    const state = window.otiumWorkflow = { requests: [], finalClicks: 0, submits: 0 };
+    document.addEventListener('submit', (event) => {
+      state.submits += 1;
+      event.preventDefault();
+    });
+    async function send(path, body, method = 'POST') {
+      try {
+        const response = await fetch(path, { method, body });
+        state.requests.push([path, method, response.ok]);
+        return response.ok;
+      } catch {
+        state.requests.push([path, method, false]);
+        return false;
+      }
+    }
+    document.querySelector('#login').addEventListener('click', async () => {
+      void send('/login?extra=1', 'wrong endpoint');
+      void send('/login', 'wrong method', 'PUT');
+      const email = document.querySelector('#login-user').value;
+      const password = document.querySelector('#login-password').value;
+      if (!await send('/login', JSON.stringify({ email, password }))) return;
+      stage.innerHTML = `
+        <h1 id="contact">Contact</h1>
+        <label>First name <input id="first-name" required></label>
+        <button id="next" type="button">Continue</button>`;
+      document.querySelector('#next').addEventListener('click', async () => {
+        const firstName = document.querySelector('#first-name').value;
+        void send('/wf/extra', 'unspecified write');
+        if (!await send('/draft/next', JSON.stringify({ firstName }))) return;
+        stage.innerHTML = `
+          <h1 id="resume-step">Resume and final review</h1>
+          <form action="/wf/submit" method="post">
+            <label>Resume <input id="resume" type="file" accept=".pdf"></label>
+            <label>Last name <input id="last-name" required></label>
+            <label>Why this employer? <textarea id="why" required></textarea></label>
+            <button id="final-submit" type="submit">Submit application</button>
+          </form>`;
+        document.querySelector('#final-submit').addEventListener('click', () => {
+          state.finalClicks += 1;
+        });
+        document.querySelector('#resume').addEventListener('change', async (event) => {
+          const file = event.target.files[0];
+          if (!file) return;
+          if (await send('/resume/upload', file)) {
+            document.querySelector('#resume-step').insertAdjacentHTML(
+              'afterend', '<p id="upload-success">Resume received</p>',
+            );
+          }
+        });
+      });
+    });
+  </script>
+</body>
+</html>

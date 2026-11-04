@@ -55,7 +55,11 @@ npm start -- --jobs jobs.json --profile profile.json --out review --session .oti
 
 Keep the machine awake and leave the terminal and browser open. Otium uses a dedicated browser profile and prepares up to two jobs at a time in this example (`--concurrency` accepts 1–5). Use separate session folders for concurrent batches.
 
-When the batch finishes, Otium prints the path to `review/<run-id>/report.html`. The same timestamped folder contains `report.json`. The report lists fields filled, fields still needing attention, and the completion rate for visible required fields. Check the report and then **press Enter in the terminal** to enable normal browser interaction. Review each original tab, complete the missing fields, attach your resume manually, and submit yourself. Press `Ctrl+C` after you finish; closing the browser can discard drafts. Use `--headless` for a report only; it closes the browser when the run ends.
+When the batch finishes, Otium prints the path to `review/<run-id>/report.html`. The same timestamped folder contains `report.json`. The report lists fields filled, fields still needing attention, and the completion rate for visible required fields. Check the report and then **press Enter in the terminal** to enable normal browser interaction. Review each original tab, finish the remaining fields and attachments, and submit yourself. Press `Ctrl+C` after you finish; closing the browser can discard drafts. Use `--headless` for a report only; it closes the browser when the run ends.
+
+## Configure a site-specific workflow
+
+Without a workflow, Otium fills the current page and stops. For a form you’ve inspected, you can explicitly configure up to 12 `login`, `resume`, and `next` steps for that job. See [workflow setup and example](docs/workflows.md) for the selectors, credential environment variables, optional `--resume` path, and the exact requests each step can make. Configured steps may sign in, attach your selected PDF, or save draft progress before you review the application. Final submission remains manual.
 
 ## Teach Otium a confirmed answer
 

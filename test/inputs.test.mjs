@@ -17,6 +17,19 @@ test('duplicate posting links share one tab and unsafe destinations are rejected
   assert.equal(redactUrl('https://jobs.example.test/opening?token=secret#secret'), 'https://jobs.example.test/opening');
 });
 
+test('rejects a final submission URL even when a workflow describes it as Next', () => {
+  assert.throws(() => parseJobs([{
+    id: 'mislabelled',
+    url: 'https://jobs.example.test/opening',
+    workflow: [{
+      type: 'next',
+      buttonSelector: '#next',
+      successSelector: '#done',
+      request: { method: 'POST', url: '/draft/submit' },
+    }],
+  }]), /workflow write url/i);
+});
+
 test('an exact role-specific answer takes priority without broadening the question match', () => {
   const profile = { answers: {}, customAnswers: { 'What interests you about this role?': 'General response' } };
   assert.deepEqual(

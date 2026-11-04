@@ -1,3 +1,5 @@
+import { validateWorkflow } from './workflow.mjs';
+
 export function parseJobs(jobs) {
   if (!Array.isArray(jobs) || !jobs.length || jobs.length > 50) throw Error('jobs must contain 1–50 entries');
   const ids = new Set(), urls = new Set();
@@ -11,7 +13,8 @@ export function parseJobs(jobs) {
     if (/(^|\.)(linkedin\.com|joinhandshake\.com|myworkdayjobs\.com|myworkdaysite\.com)$/.test(url.hostname)) throw Error('Use a supported direct employer application form; LinkedIn, Handshake, and Workday flows require manual handling');
     if (urls.has(url.href)) return [];
     urls.add(url.href);
-    return [{ id: job.id, url: url.href, answers: job.answers ?? {} }];
+    if (job.credentialEnv !== undefined && (typeof job.credentialEnv !== 'string' || !/^OTIUM_[A-Z0-9_]{1,64}$/.test(job.credentialEnv))) throw Error('credentialEnv must be an OTIUM_ environment variable prefix');
+    return [{ id: job.id, url: url.href, answers: job.answers ?? {}, workflow: validateWorkflow(job.workflow, url.origin), credentialEnv: job.credentialEnv }];
   });
 }
 
