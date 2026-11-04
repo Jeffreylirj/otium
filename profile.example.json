@@ -1,0 +1,16 @@
+{
+  "answers": {
+    "firstName": "Alex",
+    "lastName": "Example",
+    "email": "alex@example.com",
+    "phone": "4155550100",
+    "city": "San Francisco",
+    "state": "California",
+    "country": "United States",
+    "university": "Example University",
+    "major": "Computer Science"
+  },
+  "customAnswers": {
+    "Are you available for a summer internship?": "Yes"
+  }
+}

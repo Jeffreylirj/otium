@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture application</title></head>
+<body>
+  <h1>Fixture application</h1>
+  <form action="/submitted" method="post">
+    <label for="given">First name</label>
+    <input id="given" name="first_name" autocomplete="given-name" required>
+    <label>Last name <input name="last_name" autocomplete="family-name" required></label>
+    <input aria-label="Email address" type="email" name="email" required>
+    <label>Phone number <input type="tel" name="phone" required></label>
+    <label>Country
+      <select name="country" required>
+        <option value="">Select a country</option>
+        <option value="US">United States</option>
+        <option value="CA">Canada</option>
+      </select>
+    </label>
+    <label>LinkedIn profile URL <input type="url" name="linkedin"></label>
+    <label>What interests you about this role?
+      <textarea name="motivation" required></textarea>
+    </label>
+    <label>What is your desired compensation? <input name="compensation" required></label>
+    <label>Are you legally authorized to work in the United States?
+      <select name="authorization" required>
+        <option value="">Choose an answer</option><option>Yes</option><option>No</option>
+      </select>
+    </label>
+    <label><input type="checkbox" name="consent" required> I certify that all information is true</label>
+    <button id="continue" type="button">Next</button>
+    <button id="submit" type="submit">Submit application</button>
+  </form>
+  <script>
+    window.otiumFixture = { clicks: [], submitEvents: 0 };
+    for (const button of document.querySelectorAll('button')) {
+      button.addEventListener('click', () => window.otiumFixture.clicks.push(button.id));
+    }
+    document.querySelector('form').addEventListener('submit', (event) => {
+      window.otiumFixture.submitEvents += 1;
+      event.preventDefault();
+    });
+  </script>
+</body>
+</html>

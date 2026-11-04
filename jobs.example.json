@@ -1,0 +1,13 @@
+[
+  {
+    "id": "example-swe",
+    "url": "https://careers.example.com/apply/123"
+  },
+  {
+    "id": "example-data",
+    "url": "https://jobs.example.org/application/456",
+    "answers": {
+      "Why this team?": "I would like to work on the data quality tooling described in the posting."
+    }
+  }
+]

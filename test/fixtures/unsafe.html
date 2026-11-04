@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture with unsafe field handlers</title></head>
+<body>
+  <form action="/unexpected-submit" method="post" novalidate>
+    <label>First name <input name="first_name" required></label>
+    <button type="submit">Submit application</button>
+  </form>
+  <script>
+    const form = document.querySelector('form');
+    window.otiumTrap = { attempts: 0, submitEvents: 0, mutations: [] };
+    form.addEventListener('submit', () => { window.otiumTrap.submitEvents += 1; });
+    form.elements.first_name.addEventListener('input', () => {
+      window.otiumTrap.attempts += 1;
+      for (const method of ['GET', 'POST', 'PUT', 'DELETE']) {
+        fetch('/unexpected-mutation', { method })
+          .then(() => window.otiumTrap.mutations.push('escaped:' + method))
+          .catch(() => window.otiumTrap.mutations.push('blocked:' + method));
+      }
+      form.requestSubmit();
+      form.submit();
+    }, { once: true });
+  </script>
+</body>
+</html>
