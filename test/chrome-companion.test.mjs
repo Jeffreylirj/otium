@@ -28,7 +28,22 @@ test('regular Chrome queue leases only the requested concurrency and accepts res
   assert.equal(JSON.stringify(queue.state()).includes('Synthetic'),false);
 });
 
-test('Prepare applications dispatches real extension workers into the same Chrome window', {skip:process.env.OTIUM_TEST_CHROME_EXTENSION!=='1',timeout:45000},async()=>{
+test('Simplify jobs require a compatible companion and never lease Otium answer or resume data',()=>{
+  const queue=createChromeQueue(),origin='chrome-extension://'+ 'a'.repeat(32);
+  const jobs=[{id:'one',url:'https://example.test/apply',answers:{city:'Synthetic'}}];
+  queue.poll(origin,1);
+  assert.match(queue.start(jobs,{},null,1,'simplify'),/Reload/);
+  queue.poll(origin,1,['simplify-copilot']);
+  assert.equal(queue.start(jobs,{answers:{name:'Synthetic'}},{base64:'fake'},1,'simplify'),undefined);
+  assert.equal(queue.poll(origin,1).jobs.length,0,'old worker does not receive Simplify jobs');
+  const [task]=queue.poll(origin,1,['simplify-copilot']).jobs;
+  assert.equal(task.provider,'simplify');
+  assert.deepEqual(task.job,{id:'one',url:'https://example.test/apply'});
+  assert.equal(task.profile,null);
+  assert.equal(task.resume,null);
+});
+
+test('Chrome companion runs the local demo and delegates real batches to Copilot controls', {skip:process.env.OTIUM_TEST_CHROME_EXTENSION!=='1',timeout:60000},async()=>{
   const dir=await mkdtemp(join(tmpdir(),'otium-companion-'));
   const app=createOtiumServer();
   let context;
@@ -53,9 +68,7 @@ test('Prepare applications dispatches real extension workers into the same Chrom
     // require only the manifest's localhost access, not broad site permission.
     await worker.evaluate(async id=>chrome.storage.local.set({otiumConnected:true,otiumWindowId:id}),windowId);
     await control.getByText('Regular Chrome connected',{exact:true}).waitFor({timeout:12000});
-    await control.locator('#jobs').fill(origin+'/demo/apply/1\n'+origin+'/demo/apply/2');
-    await control.locator('#firstName').fill('Alex');
-    await control.getByRole('button',{name:'Prepare applications',exact:true}).click();
+    await control.getByRole('button',{name:'Try demo',exact:true}).click();
     await control.getByText('Ready for review',{exact:true}).waitFor({timeout:18000});
     const state=await (await control.request.get(origin+'/api/state')).json();
     assert.equal(state.transport,'chrome-extension');
@@ -78,6 +91,49 @@ test('Prepare applications dispatches real extension workers into the same Chrom
     await control.getByText('Batch closed',{exact:true}).waitFor();
     await Promise.all(tabs.map(tab=>tab.isClosed()?null:tab.waitForEvent('close',{timeout:6000})));
     assert.equal(control.isClosed(),false);
+
+    // Simulate only Copilot's publicly visible UI in a local fixture. Do not
+    // run the user's actual extension against an employer during tests.
+    const [handleRequest]=app.server.listeners('request');
+    app.server.removeListener('request',handleRequest);
+    app.server.on('request',(req,res)=>{
+      if(!/^\/demo\/apply\/[12]$/.test(req.url))return handleRequest(req,res);
+      const signIn=req.url.endsWith('/2');
+      res.writeHead(200,{'Content-Type':'text/html','Cache-Control':'no-store'});
+      res.end(`<!doctype html><label>First name <input id="given"></label>
+        <label>Last name <input id="family"></label><button id="submit">Submit application</button>
+        <script>
+          window.calls={fill:0,account:0,autopilot:0,submit:0};
+          document.querySelector('#submit').onclick=()=>calls.submit++;
+          const host=document.createElement('div');host.className='simplify-jobs-shadow-root';document.body.append(host);
+          const root=host.attachShadow({mode:'open'});
+          root.innerHTML='<button aria-label="Show fill prompt">Open</button>';
+          root.querySelector('button').onclick=()=>{
+            root.innerHTML='<button id="autopilot">Autopilot</button>'+(${JSON.stringify(signIn)}
+              ? '<button id="account-fill-button">Sign in and autofill</button>'
+              : '<button id="fill-button" aria-label="Autofill this page">Autofill This Page</button>');
+            root.querySelector('#autopilot').onclick=()=>calls.autopilot++;
+            const account=root.querySelector('#account-fill-button');
+            if(account)account.onclick=()=>calls.account++;
+            const fill=root.querySelector('#fill-button');
+            if(fill)fill.onclick=()=>{calls.fill++;document.querySelector('#given').value='Synthetic Copilot';};
+          };
+        </script>`);
+    });
+    await control.locator('#jobs').fill(origin+'/demo/apply/1\n'+origin+'/demo/apply/2');
+    await control.getByRole('button',{name:'Prepare applications',exact:true}).click();
+    await control.getByText('Ready for review',{exact:true}).waitFor({timeout:20000});
+    const copilotState=await (await control.request.get(origin+'/api/state')).json();
+    assert.deepEqual(copilotState.results.map(job=>[job.provider,job.reason]),[
+      ['simplify','simplify_autofill_started'],['simplify','sign_in_in_chrome_then_retry']
+    ]);
+    const first=context.pages().find(p=>p.url()===origin+'/demo/apply/1');
+    const second=context.pages().find(p=>p.url()===origin+'/demo/apply/2');
+    assert.deepEqual(await first.evaluate(()=>window.calls),{fill:1,account:0,autopilot:0,submit:0});
+    assert.deepEqual(await second.evaluate(()=>window.calls),{fill:0,account:0,autopilot:0,submit:0});
+    assert.equal(await first.locator('#given').inputValue(),'Synthetic Copilot');
+    assert.equal(await second.locator('#given').inputValue(),'');
+    assert.equal(await worker.evaluate(async()=> (await chrome.declarativeNetRequest.getSessionRules()).length),0);
   }finally{
     await context?.close();
     await app.close();

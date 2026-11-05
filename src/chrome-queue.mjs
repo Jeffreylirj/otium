@@ -7,7 +7,7 @@ const resultFields = list => Array.isArray(list) ? list.slice(0,250).filter(x=>t
 })) : [];
 
 export function createChromeQueue() {
-  let owner, lastSeen = 0, batch;
+  let owner, lastSeen = 0, batch, simplifyReady=false;
   const connected = () => Boolean(owner && Date.now()-lastSeen<45000);
   function settle() {
     if(!batch || batch.status!=='running') return;
@@ -26,29 +26,33 @@ export function createChromeQueue() {
   }
   function state() {
     settle();
-    return {chromeConnected:connected(),transport:'chrome-extension',status:batch?.status??'idle',id:batch?.id??null,error:null,
+    return {chromeConnected:connected(),simplifyReady:connected()&&simplifyReady,transport:'chrome-extension',status:batch?.status??'idle',id:batch?.id??null,error:null,
       progress:batch?{done:batch.items.filter(x=>x.result).length,total:batch.items.length}:null,
-      results:batch?.items.filter(item=>item.result).map(item=>({id:item.job.id,url:redactUrl(item.job.url),...item.result}))??[]};
+      results:batch?.items.filter(item=>item.result).map(item=>({id:item.job.id,url:redactUrl(item.job.url),provider:batch.provider,...item.result}))??[]};
   }
   return {
     state,
-    start(jobs, profile, resume, concurrency) {
+    start(jobs, profile, resume, concurrency, provider='local') {
       if(!connected()) return 'Connect the Otium extension in your regular Chrome first.';
+      if(provider==='simplify'&&!simplifyReady) return 'Reload Otium Chrome Companion in chrome://extensions to enable Simplify.';
       if(batch && batch.status!=='closed') return 'Close the current batch first.';
-      batch={id:randomUUID(),status:'running',profile,resume,concurrency,items:jobs.map(job=>({job,lease:0,ticket:null,result:null}))};
+      batch={id:randomUUID(),status:'running',provider,profile:provider==='simplify'?null:profile,resume:provider==='simplify'?null:resume,concurrency,
+        items:jobs.map(job=>({job:provider==='simplify'?{id:job.id,url:job.url,answers:{}}:job,lease:0,ticket:null,result:null}))};
     },
     review() { if(batch?.status!=='ready') return false; batch.status='reviewing'; return true; },
     close() { if(batch?.status==='running') return false; if(batch) {batch.status='closed';batch.profile=null;batch.resume=null;} return true; },
-    poll(origin, windowId) {
+    poll(origin, windowId, capabilities) {
       if(owner && owner!==origin && (connected() || batch?.status==='running')) return null;
       owner=origin;lastSeen=Date.now();
+      simplifyReady=Array.isArray(capabilities)&&capabilities.includes('simplify-copilot');
       settle();
       const jobs=[];
-      if(batch?.status==='running' && Number.isInteger(windowId) && windowId>=0) {
+      if(batch?.status==='running' && (batch.provider!=='simplify'||simplifyReady) && Number.isInteger(windowId) && windowId>=0) {
         const free=batch.concurrency-batch.items.filter(item=>item.lease&&!item.result).length;
         for(const item of batch.items.filter(item=>!item.lease).slice(0,Math.max(0,free))) {
           item.lease=Date.now();item.ticket=randomUUID();
-          jobs.push({batchId:batch.id,ticket:item.ticket,windowId,job:item.job,profile:batch.profile,resume:batch.resume});
+          const job=batch.provider==='simplify'?{id:item.job.id,url:item.job.url}:item.job;
+          jobs.push({batchId:batch.id,ticket:item.ticket,windowId,job,provider:batch.provider,profile:batch.profile,resume:batch.resume});
         }
       }
       return {batchId:batch?.id??null,status:batch?.status??'idle',jobs};

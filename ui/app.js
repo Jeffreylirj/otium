@@ -12,9 +12,11 @@ function render(next){
  const active=['running','ready','reviewing'].includes(next.status);
  const regular=next.transport==='chrome-extension';
  $('chrome-setup').hidden=!regular;
- $('chrome-connection').textContent=next.chromeConnected?'Regular Chrome connected':'Chrome companion not connected';
- $('chrome-help').hidden=Boolean(next.chromeConnected);
+ $('chrome-connection').textContent=!next.chromeConnected?'Chrome companion not connected':next.simplifyReady?'Regular Chrome connected':'Reload Chrome companion for Simplify';
+ $('chrome-help').hidden=Boolean(next.chromeConnected&&next.simplifyReady);
  $('workflow-options').hidden=regular;
+ $('copilot-note').hidden=!regular;
+ $('local-profile').hidden=regular;
  $('resume-help').textContent=regular?'Stages the selected PDF in a recognized resume field. Verify the attachment before submitting.':'Used only by an explicitly configured upload step.';
  $('prepare').disabled=active||busy;$('demo').disabled=active||busy;$('empty-demo').disabled=active||busy;
  $('status').textContent=({idle:'Ready to start',running:'Preparing…',ready:'Ready for review',reviewing:'Manual review enabled',closed:'Batch closed',error:'Needs attention'})[next.status]||next.status;
@@ -29,9 +31,21 @@ function render(next){
  for(const result of next.results){
   const article=node('article','result');article.dataset.jobId=result.id;
   const head=node('div','result-head'),text=node('div');text.append(node('h3','',result.id),node('p','result-url',result.url));
-  const score=node('div','coverage',result.coverage===null?'—':Math.round(result.coverage)+'%');score.title='Completed visible required fields on scanned pages';const scoreGroup=node('div','coverage-wrap');scoreGroup.append(score,node('span','fine','required complete'));head.append(text,scoreGroup);article.append(head,node('span','status',result.status==='review'?'Ready to check':result.status==='blocked'?'Needs manual input':'Could not prepare'));
-  article.append(node('p','',`${result.filled.length} fields filled · ${result.missing.filter(f=>f.required).length} required gaps`));
-  if(result.reason)article.append(node('p','fine',result.reason.replaceAll('_',' ')));
+  if(result.provider!=='simplify'){
+   const score=node('div','coverage',result.coverage===null?'—':Math.round(result.coverage)+'%');score.title='Completed visible required fields on scanned pages';const scoreGroup=node('div','coverage-wrap');scoreGroup.append(score,node('span','fine','required complete'));head.append(text,scoreGroup);
+  }else head.append(text,node('span','fine','Simplify Copilot'));
+  article.append(head,node('span','status',result.status==='review'?(result.provider==='simplify'?'Copilot started':'Ready to check'):result.status==='blocked'?'Needs manual input':'Could not prepare'));
+  if(result.provider!=='simplify')article.append(node('p','',`${result.filled.length} fields filled · ${result.missing.filter(f=>f.required).length} required gaps`));
+  const messages={simplify_autofill_started:'Copilot started. Review the answers and attachments in Chrome when it finishes.',
+    simplify_start_unconfirmed:'Otium clicked Autofill this page but could not confirm that Copilot started. Check the panel in Chrome.',
+    simplify_panel_not_found:'No accessible Copilot panel appeared. Check that Simplify is installed, enabled, and signed in, and that this is the actual application form.',
+    simplify_autofill_unavailable:'Copilot did not expose an enabled Autofill this page control. Check the panel in Chrome.',
+    simplify_control_ambiguous:'More than one Copilot fill control was visible. Select the intended control manually.',
+    sign_in_in_chrome_then_retry:'This employer requires sign-in. Sign in in Chrome, then use Copilot on the application form.',
+    sign_in_in_chrome_then_resume_manually:'This employer requires sign-in. Sign in in Chrome, then use Copilot on the application form.',
+    posting_closed:'The employer says this posting is closed.'};
+  if(result.reason)article.append(node('p','',messages[result.reason]||result.reason.replaceAll('_',' ')));
+  if(result.provider==='simplify'){$('results').append(article);continue;}
   const details=node('details'),summary=node('summary','', 'See filled fields and questions');details.append(summary);
   for(const [title,fields]of[['Filled',result.filled],['Needs your input',result.missing]]){
    if(!fields.length)continue;details.append(node('p','',title));const list=node('ul');
@@ -50,10 +64,13 @@ async function start(demo){
   if(!demo){
    const advanced=state.transport==='chrome-extension'?'':$('workflow').value.trim();
    const jobs=advanced?JSON.parse(advanced):$('jobs').value.split(/\n/).map(s=>s.trim()).filter(Boolean).map((url,i)=>({id:'application-'+(i+1),url}));
-   const answers=Object.fromEntries(profileKeys.map(k=>[k,$(k).value.trim()]).filter(([,v])=>v));
-   const customAnswers=$('answers').value.trim()?JSON.parse($('answers').value):{};
-   payload={jobs,profile:{answers,customAnswers},concurrency:Number($('concurrency').value)};
-   const file=$('resume').files[0];
+   payload={jobs,concurrency:Number($('concurrency').value)};
+   if(state.transport!=='chrome-extension'){
+    const answers=Object.fromEntries(profileKeys.map(k=>[k,$(k).value.trim()]).filter(([,v])=>v));
+    const customAnswers=$('answers').value.trim()?JSON.parse($('answers').value):{};
+    payload.profile={answers,customAnswers};
+   }
+   const file=state.transport==='chrome-extension'?null:$('resume').files[0];
    if(file){
     if(file.size>10*1024*1024||!file.name.toLowerCase().endsWith('.pdf'))throw Error('Choose a PDF smaller than 10 MB.');
     const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(Error('Could not read that file.'));reader.readAsDataURL(file);});

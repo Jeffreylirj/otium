@@ -56,14 +56,15 @@ export function createOtiumServer({ headless = false, browserChannel = 'chrome',
       try { body=JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(400,{error:'Enter valid JSON.'}); }
       if (!body || typeof body !== 'object' || Array.isArray(body)) return send(400,{error:'Expected a JSON object.'});
       if (path==='/api/chrome/poll') {
-        const response=chromeQueue.poll(origin,body.windowId);
+        const response=chromeQueue.poll(origin,body.windowId,body.capabilities);
         return response ? send(200,response) : send(409,{error:'Another Chrome profile is connected.'});
       }
       if (path==='/api/chrome/complete') return chromeQueue.complete(origin,body) ? send(200,{ok:true}) : send(409,{error:'This job is no longer active.'});
       if (path === '/api/run') {
         if (closing || pending.size) return send(409,{error:'Wait for the previous batch to finish closing.'});
         if (run && !['closed','error'].includes(run.status)) return send(409,{error:'Close the current batch before starting another.'});
-        const profile=body.demo ? demoProfile : body.profile;
+        const provider=transport==='chrome'&&!body.demo?'simplify':'local';
+        const profile=body.demo ? demoProfile : provider==='simplify'?{answers:{}}:body.profile;
         if (!profile || typeof profile !== 'object' || Array.isArray(profile) || !profile.answers || typeof profile.answers !== 'object' || Array.isArray(profile.answers) ||
           (profile.customAnswers && (typeof profile.customAnswers !== 'object' || Array.isArray(profile.customAnswers)))) return send(400,{error:'Provide your profile details.'});
         const jobs=parseJobs(body.demo ? [1,2].map(n=>({id:'demo-'+n,url:'http://'+expectedHost+'/demo/apply/'+n})) : body.jobs,{regularChrome:transport==='chrome'});
@@ -72,13 +73,13 @@ export function createOtiumServer({ headless = false, browserChannel = 'chrome',
         if (!Number.isInteger(concurrency) || concurrency<1 || concurrency>5) return send(400,{error:'Choose 1–5 parallel tabs.'});
         if(transport==='chrome' && jobs.some(job=>job.workflow.length || job.credentialEnv)) return send(400,{error:'Configured sign-ins and page transitions use the CLI. Use direct job URLs in regular Chrome.'});
         let resume;
-        if (body.resume) {
+        if (body.resume && provider!=='simplify') {
           if (typeof body.resume.base64 !== 'string' || body.resume.base64.length>14*1024*1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(body.resume.base64)) return send(400,{error:'Choose a PDF smaller than 10 MB.'});
           resume=Buffer.from(body.resume.base64,'base64');
           if (resume.length>10*1024*1024 || resume.subarray(0,5).toString()!=='%PDF-') return send(400,{error:'Choose a valid PDF smaller than 10 MB.'});
         }
         if(transport==='chrome') {
-          const error=chromeQueue.start(jobs,profile,resume?{name:'resume.pdf',base64:resume.toString('base64')}:null,concurrency);
+          const error=chromeQueue.start(jobs,profile,resume?{name:'resume.pdf',base64:resume.toString('base64')}:null,concurrency,provider);
           return error ? send(409,{error}) : send(202,publicState());
         }
         run={id:randomUUID(),status:'running',results:[],progress:{done:0,total:jobs.length},error:null,release:null};

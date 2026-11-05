@@ -1,3 +1,5 @@
+import { fillWithCopilot } from './simplify.js';
+
 const app='http://127.0.0.1:4317';
 const pulseAlarm='otium-worker-poll';
 const guardTypes=['main_frame','sub_frame','xmlhttprequest','ping','websocket','webtransport','other'];
@@ -86,7 +88,7 @@ async function inspect(tabId){
   });
 }
 
-async function prepare({batchId,ticket,windowId,job,profile,resume}, focus) {
+async function prepare({batchId,ticket,windowId,job,profile,resume,provider}, focus) {
   let tabId, result;
   try {
     if(!allowedTarget(job.url))throw Error('unsupported_destination');
@@ -122,6 +124,12 @@ async function prepare({batchId,ticket,windowId,job,profile,resume}, focus) {
     await remember({id:tabId,batchId,url:loaded.url});
     if(page.closed)result=empty('blocked','posting_closed');
     else if(page.auth)result=empty('blocked','sign_in_in_chrome_then_resume_manually');
+    else if(provider==='simplify'){
+      // Copilot needs its ordinary network access. Do not apply the built-in
+      // worker's tab freeze, and do not hand any Otium profile data to Copilot.
+      const reason=await script(tabId,fillWithCopilot,[loaded.url]);
+      result=empty(reason==='simplify_autofill_started'?'review':'blocked',reason??'simplify_autofill_unavailable');
+    }
     else if(page.fields<2)result=empty('blocked','open_the_direct_application_form');
     else{
       await guard(tabId);
@@ -142,7 +150,7 @@ async function poll(windowId) {
   if(!Number.isInteger(targetWindow) || !await chrome.windows.get(targetWindow).then(w=>w.type==='normal',()=>false)){
     targetWindow=(await chrome.windows.getLastFocused({windowTypes:['normal']}).catch(()=>null))?.id;
   }
-  const data=await api('poll',{windowId:targetWindow});
+  const data=await api('poll',{windowId:targetWindow,capabilities:['simplify-copilot']});
   lastFailure=0;
   if(data.status==='reviewing'||data.status==='closed'||data.status==='idle')await releaseGuards(data.status==='closed',data.batchId);
   // Lease a bounded set in the server, then dispatch one independent worker per tab.

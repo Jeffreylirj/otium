@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Otium Chrome Companion",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minimum_chrome_version": "120",
   "description": "Prepare Otium batches in your regular Chrome tabs, with final submission left to you.",
   "permissions": ["scripting", "storage", "alarms", "declarativeNetRequest"],
