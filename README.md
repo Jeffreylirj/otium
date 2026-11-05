@@ -4,6 +4,19 @@ Otium is a local browser runner for preparing a batch of job applications. Give 
 
 ## Run a batch
 
+For an easier way to test, launch the local interface:
+
+```sh
+npm ci
+npm run ui
+```
+
+Open **http://127.0.0.1:4317** and click **Try demo**. Otium opens two synthetic applications in Chrome, fills the sample profile, and shows a checklist. No employer receives the demo data. Click **Enable manual review** to unlock the tabs, then **Close batch** when finished.
+
+To use your own links, enter your details and paste one direct application URL per line. Reusable exact answers and configured multi-page workflows are available in the expandable sections. The selected PDF is used only for a configured resume step. The interface uses installed Google Chrome and stores private reports under the ignored `.otium-ui/` folder; profile answers stay in memory and any temporary uploaded PDF is removed after preparation. Keep the terminal running. Press Ctrl+C to stop the interface.
+
+The shared autofill engine supports labeled inputs, native dropdowns, standard autocomplete hints, recognized placeholder hints, grouped radio questions, confirmed Boolean checkboxes, exact existing ARIA listbox options, dependent fields, and visible same-origin embedded forms. See [form support research](docs/form-support.md) for tested patterns and the remaining gaps.
+
 Install Node.js 22 or later, then install the dependencies and Chromium:
 
 ```sh

@@ -6,13 +6,19 @@ Otium’s first milestone is to take a list of application pages, fill fields us
 
 - Verify the employer and posting before giving a page access to personal information. Use links you trust and review any sign-in requests directly in the browser.
 - Review employer-specific questions, declarations, sensitive fields, and fields with ambiguous labels. An unknown answer is a gap, not an invitation to guess. A field left untouched might already contain a value supplied by the page or browser; review it anyway.
-- Handle verification challenges, single sign-on, cross-origin transitions, and any pages the runner cannot reach or understand. [Configured workflows](workflows.md) can handle an explicitly configured same-origin sign-in, native PDF input, or draft progression. There is no automatic discovery of these actions. Generic autofill still leaves custom controls, checkboxes, and radio buttons for manual review.
+- Handle verification challenges, single sign-on, cross-origin transitions, and any pages the runner cannot reach or understand. [Configured workflows](workflows.md) can handle an explicitly configured same-origin sign-in, native PDF input, or draft progression. There is no automatic discovery of these actions. Generic autofill supports grouped radio questions, exact Boolean checkboxes and existing ARIA listbox options; unsupported widgets and sensitive declarations remain manual.
 - Confirm the meaning of each configured request before using it. The runner validates the URL and control and checks the observed result, but it cannot prove what the employer’s server does with a request. A timed-out or blocked transition is not proof that an approved request had no effect. Inspect the current draft before retrying.
 - Click the final submission control yourself. Once you press Enter in the terminal, the runner removes its temporary restrictions, so a page may begin sending or autosaving answers even before you submit. Closing the bot or its browser is not a durable save.
 
 Use direct employer form links. The CLI rejects LinkedIn, Handshake, and common Workday application domains. [LinkedIn prohibits unauthorized automation](https://www.linkedin.com/help/linkedin/answer/a1341543), and [Handshake’s external apply flow can involve its own questions and application state](https://support.joinhandshake.com/hc/en-us/articles/360043604173-Jobs-Apply-Externally).
 
 ## Coverage and evidence
+
+The common-structure engine adds semantic labels, autocomplete tokens, known placeholder hints, group-level radios, confirmed checkboxes, existing accessible listbox options, bounded discovery of dependent fields, and visible same-origin frames. The synthetic common-controls fixture reaches 7 of 8 required questions (87.5%); certification is deliberately left for review. A dependent-field fixture reaches 2 of 2. These measurements describe those fixtures only.
+
+The local interface runs the same browser engine. Its demo uses two local forms with synthetic answers and intentionally unresolved questions. The UI browser test verifies both application results, explicit manual handoff, batch closure, and rejected requests from the wrong origin or without the session token. The server binds to 127.0.0.1; this interface is not the older hosted Trajectory dashboard.
+
+The November 5 regression run passed all 17 tests in isolated Chrome, including the interface demo, common controls, same-origin frames, conditional fields, earlier sign-in/upload workflows, and the manual submission boundary.
 
 “90% filled” is a target for supported forms, not a guarantee across employers. For a meaningful coverage number, count required fields Otium correctly filled and verified against **all** required fields the applicant had to answer, including those on later pages. Report unsupported pages, wrong values, unknown answers, and manual steps separately. A percentage from only the fields a runner recognized can hide substantial work.
 

@@ -1,11 +1,10 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { normalize, resolveAnswer } from './fields.mjs';
+import { formSelector as selector, fillForm } from './autofill.mjs';
 import { parseJobs, redactUrl } from './input.mjs';
 import { publicFormRead } from './public-form.mjs';
 import { executeStep, readResume } from './workflow.mjs';
 
-const selector = 'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]), textarea, select, [role=combobox]:not(input):not(select), [contenteditable=true]';
 const guardKey = '__otiumRestoreSubmission';
 
 function blockSubmit(key) {
@@ -28,92 +27,21 @@ function blockSubmit(key) {
   };
 }
 
-function snapshot(elements) {
-  return elements.flatMap((el, index) => {
-    const rect = el.getBoundingClientRect();
-    if (!rect.width || !rect.height || el.closest('[inert],[hidden],[aria-hidden=true]') || getComputedStyle(el).visibility !== 'visible') return [];
-    const name = el.getAttribute('name') || '';
-    const labelled = el.getAttribute('aria-labelledby')?.split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ');
-    const label = (labelled || el.getAttribute('aria-label') || [...(el.labels || [])].map(l => {
-      const copy = l.cloneNode(true);
-      copy.querySelectorAll('input,select,textarea,button,[aria-hidden=true]').forEach(node => node.remove());
-      return copy.textContent;
-    }).join(' ')).replace(/\s+/g, ' ').trim().slice(0, 240);
-    const type = el.tagName === 'INPUT' ? el.type : el.tagName.toLowerCase();
-    const required = Boolean(el.required || el.getAttribute('aria-required') === 'true' || /\*\s*$/.test(label));
-    const selected = el.options?.[el.selectedIndex];
-    const valid = el.validity?.valid ?? true;
-    const value = ['radio','checkbox'].includes(type) ? el.checked : Boolean(el.value?.trim() && !(selected?.disabled));
-    return [{ index, name, label, type, required, valid, populated: value, disabled: el.matches(':disabled') || el.readOnly || el.getAttribute('aria-disabled') === 'true',
-      options: [...(el.options || [])].filter(o => o.value && !o.disabled && !o.closest('optgroup[disabled]')).map(o => ({ label: o.label, value: o.value })) }];
-  });
-}
-
 async function fillPage(page, profile, job) {
-  await page.evaluate(blockSubmit, guardKey);
-  const scannedUrl = page.url();
-  const elements = page.locator(selector);
-  const initial = await elements.evaluateAll(snapshot);
-  const blocked = initial.some(f => f.type === 'password' || /\b(captcha|one time code|verification code)\b/.test(normalize(f.label + ' ' + f.name)));
-  if (blocked) return { filled: [], missing: [], requiredTotal: 0, requiredComplete: 0, coverage: null, reason: 'sign_in_or_verification', status: 'blocked' };
-  if (!initial.length) return { filled: [], missing: [], requiredTotal: 0, requiredComplete: 0, coverage: null, reason: 'no_visible_fields', status: 'blocked' };
-  const counts = new Map();
-  const identity = f => JSON.stringify([f.label, f.name, f.type]);
-  for (const f of initial) counts.set(identity(f), (counts.get(identity(f)) || 0) + 1);
-  const filled = new Map(), attempted = new Set(), reasons = new Map();
-  const describe = f => ({ label: f.label || 'Unlabeled field', required: f.required });
-  for (const f of initial.slice(0, 150)) {
-    if (f.populated) continue;
-    const key = identity(f);
-    const skip = reason => reasons.set(key, reason);
-    if (!f.label || f.disabled || counts.get(key) !== 1) { skip('ambiguous_or_unavailable'); continue; }
-    if (!['text','email','tel','url','number','date','month','textarea','select'].includes(f.type)) { skip('manual_control'); continue; }
-    const answer = resolveAnswer(f, profile, job.answers);
-    if ('reason' in answer) { skip(answer.reason); continue; }
-    if (page.url() !== scannedUrl) throw Error('page_changed');
-    const current = (await elements.evaluateAll(snapshot)).find(field => field.index === f.index);
-    if (!current || identity(current) !== key || current.populated || current.disabled) { skip('field_changed'); continue; }
-    const field = elements.nth(f.index);
+  const origin = new URL(page.url()).origin;
+  for (const frame of page.frames()) {
     try {
-      const value = typeof answer.value === 'boolean' ? (answer.value ? 'Yes' : 'No') : answer.value;
-      let expected = value;
-      if (f.type === 'select') {
-        const options = current.options.filter(o => normalize(o.label) === normalize(value) || normalize(o.value) === normalize(value));
-        if (options.length !== 1) { skip('no_unique_option'); continue; }
-        expected = options[0].value;
-        attempted.add(key);
-        await field.selectOption({ value: expected }, { timeout: 900 });
-      } else {
-        if (typeof answer.value !== 'string') { skip('manual_control'); continue; }
-        attempted.add(key);
-        await field.fill(value, { timeout: 900 });
-      }
-      if (await field.inputValue({ timeout: 900 }) === expected) filled.set(key, expected);
-      else skip('value_not_retained');
-    } catch { skip('control_rejected_answer'); }
+      await frame.waitForLoadState('domcontentloaded', { timeout: 1200 });
+      if (new URL(frame.url()).origin === origin) await frame.evaluate(blockSubmit, guardKey);
+    } catch { /* A frame that is navigating or detached must not stop the main form scan. */ }
   }
-  if (page.url() !== scannedUrl) throw Error('page_changed');
-  const final = await elements.evaluateAll(snapshot);
-  const required = final.filter(f => f.required && !f.disabled);
-  const verified = [], verifiedKeys = new Set();
-  for (const f of final) {
-    const expected = filled.get(identity(f));
-    if (expected === undefined || !f.valid) continue;
-    if (await elements.nth(f.index).inputValue({ timeout: 900 }).catch(() => null) === expected) {
-      verified.push(describe(f));
-      verifiedKeys.add(identity(f));
-    }
-  }
-  const failedFill = f => attempted.has(identity(f)) && !verifiedKeys.has(identity(f));
-  const complete = required.filter(f => f.populated && f.valid && !failedFill(f)).length;
-  return { status: 'review', filled: verified,
-    missing: final.filter(f => !f.disabled && (!f.populated || !f.valid || failedFill(f))).map(f => ({ ...describe(f), reason: !f.valid && f.populated ? 'invalid_value' : reasons.get(identity(f)) || (failedFill(f) ? 'value_changed_after_fill' : 'manual_review') })),
-    requiredTotal: required.length, requiredComplete: complete, coverage: required.length ? 100 * complete / required.length : null };
+  return fillForm(page, profile, job);
 }
 
 async function prepareJob({ page, job, state, profile, credentials, resume, settleMs }) {
   const response = await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 18000 }).catch(() => null);
   if (!response?.ok() || new URL(page.url()).origin !== state.origin) throw Error('navigation_failed');
+  await page.waitForLoadState('load', { timeout: 2000 }).catch(() => {});
   if (settleMs) {
     await page.waitForTimeout(settleMs);
     await page.locator(selector).filter({ visible: true }).first().waitFor({ state: 'visible', timeout: 4000 }).catch(() => {});
@@ -155,7 +83,7 @@ async function prepareJob({ page, job, state, profile, credentials, resume, sett
   }
 }
 
-export async function runBatch({ jobs, profile, context, credentials = {}, resumePath, concurrency = 2, outDir, settleMs = 1200 }) {
+export async function runBatch({ jobs, profile, context, credentials = {}, resumePath, concurrency = 2, outDir, settleMs = 1200, onProgress }) {
   const queue = parseJobs(jobs);
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 5) throw Error('Concurrency must be an integer from 1 to 5');
   if (!profile || typeof profile !== 'object') throw Error('Profile must be an object');
@@ -224,13 +152,22 @@ export async function runBatch({ jobs, profile, context, credentials = {}, resum
         results[index] = { ...base, status: 'error', reason: ['navigation_failed','page_changed'].includes(error.message) ? error.message : 'could_not_prepare', filled: [], missing: [], coverage: null };
       } finally {
         if (state) state.frozen = true;
+        if (onProgress) {
+          try { onProgress({ done: results.filter(Boolean).length, total: queue.length }); } catch {}
+        }
       }
     }
   }));
   if (outDir) await writeReport(outDir, results);
   return { results, async releaseForReview() {
     if (released) return;
-    for (const page of policy.keys()) await page.evaluate(key => window[key]?.(), guardKey).catch(() => {});
+    for (const page of policy.keys()) {
+      for (const frame of page.frames()) {
+        if (new URL(frame.url() || 'about:blank').origin === new URL(page.url() || 'about:blank').origin) {
+          await frame.evaluate(key => window[key]?.(), guardKey).catch(() => {});
+        }
+      }
+    }
     released = true;
     await context.unroute('**/*', routeHandler);
   } };

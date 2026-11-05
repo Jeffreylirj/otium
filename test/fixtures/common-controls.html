@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Common control fixtures</title></head>
+<body>
+  <form action="/submit" method="post">
+    <input id="given" autocomplete="given-name" required>
+    <input id="family" aria-label="Last name" required>
+    <span id="email-heading">Email address</span>
+    <input id="email" type="email" aria-labelledby="email-heading" required>
+    <input id="phone" placeholder="Phone number" type="tel" required>
+    <label>Country <select id="country" required>
+      <option value="">Select country</option><option value="US">United States</option><option value="CA">Canada</option>
+    </select></label>
+    <fieldset>
+      <legend>Available for summer 2027?</legend>
+      <label><input type="radio" name="availability" value="yes" required>Yes</label>
+      <label><input type="radio" name="availability" value="no">No</label>
+    </fieldset>
+    <label><input id="travel" type="checkbox">Available for occasional travel</label>
+    <label><input id="consent" type="checkbox" required>I certify these answers are accurate</label>
+    <button id="school" type="button" role="combobox" aria-label="University" aria-controls="schools" aria-expanded="false" aria-required="true">Select university</button>
+    <ul id="schools" role="listbox" hidden>
+      <li role="option" tabindex="0">Example University</li>
+      <li role="option" tabindex="0">Other University</li>
+    </ul>
+    <input type="hidden" name="university" id="school-value">
+    <button id="submit" type="submit">Submit application</button>
+  </form>
+  <script>
+    window.controlFixture = { submitClicks: 0, submitEvents: 0 };
+    document.querySelector('#submit').addEventListener('click', () => window.controlFixture.submitClicks++);
+    document.querySelector('form').addEventListener('submit', event => {
+      window.controlFixture.submitEvents++;
+      event.preventDefault();
+    });
+    const combo = document.querySelector('#school');
+    const list = document.querySelector('#schools');
+    combo.addEventListener('click', () => {
+      list.hidden = !list.hidden;
+      combo.setAttribute('aria-expanded', String(!list.hidden));
+    });
+    list.querySelectorAll('[role=option]').forEach(option => option.addEventListener('click', () => {
+      combo.textContent = option.textContent;
+      document.querySelector('#school-value').value = option.textContent;
+      combo.setAttribute('aria-expanded', 'false');
+      list.hidden = true;
+      option.setAttribute('aria-selected', 'true');
+    }));
+  </script>
+</body>
+</html>
