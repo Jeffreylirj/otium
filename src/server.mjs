@@ -6,17 +6,19 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { chromium } from 'playwright';
 import { parseJobs } from './input.mjs';
 import { runBatch } from './run.mjs';
+import { createChromeQueue } from './chrome-queue.mjs';
 
 const root = fileURLToPath(new URL('../ui/', import.meta.url));
 const demoProfile = { answers: { firstName:'Alex', lastName:'Example', email:'alex@example.test', phone:'4155550100', country:'United States', university:'Example University', major:'Computer Science', linkedin:'https://www.linkedin.com/in/example/' },
   customAnswers: { 'What interests you about this role?':'I enjoy building useful developer tools.' } };
-const files = new Map([['/', ['index.html','text/html']], ['/app.js',['app.js','text/javascript']], ['/style.css',['style.css','text/css']]]);
+const files = new Map([['/', ['index.html','text/html']], ['/chrome-setup',['chrome-setup.html','text/html']], ['/app.js',['app.js','text/javascript']], ['/style.css',['style.css','text/css']]]);
 
-export function createOtiumServer({ headless = false, browserChannel = 'chrome', dataDir = resolve('.otium-ui') } = {}) {
+export function createOtiumServer({ headless = false, browserChannel = 'chrome', dataDir = resolve('.otium-ui'), transport = headless ? 'isolated' : 'chrome' } = {}) {
   const csrf = randomBytes(32).toString('hex');
   let run = null, browser = null, closing = false;
   const pending = new Set();
-  const publicState = () => ({csrf, status:run?.status ?? 'idle', id:run?.id ?? null, results:run?.results ?? [], progress:run?.progress ?? null, error:run?.error ?? null});
+  const chromeQueue=createChromeQueue();
+  const publicState = () => ({csrf, ...(transport==='chrome' ? chromeQueue.state() : {transport:'isolated',status:run?.status ?? 'idle', id:run?.id ?? null, results:run?.results ?? [], progress:run?.progress ?? null, error:run?.error ?? null})});
   const server = createServer(async (req,res) => {
     res.setHeader('Cache-Control','no-store');
     res.setHeader('X-Content-Type-Options','nosniff');
@@ -40,7 +42,10 @@ export function createOtiumServer({ headless = false, browserChannel = 'chrome',
         return send(404,{error:'Not found'});
       }
       if (req.method !== 'POST') return send(405,{error:'Method not allowed'});
-      if (req.headers.origin !== 'http://' + expectedHost || req.headers['x-otium-token'] !== csrf || req.headers['content-type'] !== 'application/json') return send(403,{error:'Use the Otium interface to perform this action.'});
+      const chromeAction=path.startsWith('/api/chrome/');
+      const origin=req.headers.origin ?? '';
+      const validOrigin=chromeAction ? transport==='chrome' && /^chrome-extension:\/\/[a-p]{32}$/.test(origin) : origin==='http://'+expectedHost;
+      if (!validOrigin || req.headers['x-otium-token'] !== csrf || req.headers['content-type'] !== 'application/json') return send(403,{error:'Use the Otium interface to perform this action.'});
       const chunks=[]; let size=0;
       for await (const chunk of req) {
         size+=chunk.length;
@@ -50,21 +55,31 @@ export function createOtiumServer({ headless = false, browserChannel = 'chrome',
       let body;
       try { body=JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(400,{error:'Enter valid JSON.'}); }
       if (!body || typeof body !== 'object' || Array.isArray(body)) return send(400,{error:'Expected a JSON object.'});
+      if (path==='/api/chrome/poll') {
+        const response=chromeQueue.poll(origin,body.windowId);
+        return response ? send(200,response) : send(409,{error:'Another Chrome profile is connected.'});
+      }
+      if (path==='/api/chrome/complete') return chromeQueue.complete(origin,body) ? send(200,{ok:true}) : send(409,{error:'This job is no longer active.'});
       if (path === '/api/run') {
         if (closing || pending.size) return send(409,{error:'Wait for the previous batch to finish closing.'});
         if (run && !['closed','error'].includes(run.status)) return send(409,{error:'Close the current batch before starting another.'});
         const profile=body.demo ? demoProfile : body.profile;
         if (!profile || typeof profile !== 'object' || Array.isArray(profile) || !profile.answers || typeof profile.answers !== 'object' || Array.isArray(profile.answers) ||
           (profile.customAnswers && (typeof profile.customAnswers !== 'object' || Array.isArray(profile.customAnswers)))) return send(400,{error:'Provide your profile details.'});
-        const jobs=parseJobs(body.demo ? [1,2].map(n=>({id:'demo-'+n,url:'http://'+expectedHost+'/demo/apply/'+n})) : body.jobs);
+        const jobs=parseJobs(body.demo ? [1,2].map(n=>({id:'demo-'+n,url:'http://'+expectedHost+'/demo/apply/'+n})) : body.jobs,{regularChrome:transport==='chrome'});
         if (jobs.length>20) return send(400,{error:'Use up to 20 application links per batch in the interface.'});
         const concurrency=body.concurrency ?? 2;
         if (!Number.isInteger(concurrency) || concurrency<1 || concurrency>5) return send(400,{error:'Choose 1–5 parallel tabs.'});
+        if(transport==='chrome' && jobs.some(job=>job.workflow.length || job.credentialEnv)) return send(400,{error:'Configured sign-ins and page transitions use the CLI. Use direct job URLs in regular Chrome.'});
         let resume;
         if (body.resume) {
           if (typeof body.resume.base64 !== 'string' || body.resume.base64.length>14*1024*1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(body.resume.base64)) return send(400,{error:'Choose a PDF smaller than 10 MB.'});
           resume=Buffer.from(body.resume.base64,'base64');
           if (resume.length>10*1024*1024 || resume.subarray(0,5).toString()!=='%PDF-') return send(400,{error:'Choose a valid PDF smaller than 10 MB.'});
+        }
+        if(transport==='chrome') {
+          const error=chromeQueue.start(jobs,profile,resume?{name:'resume.pdf',base64:resume.toString('base64')}:null,concurrency);
+          return error ? send(409,{error}) : send(202,publicState());
         }
         run={id:randomUUID(),status:'running',results:[],progress:{done:0,total:jobs.length},error:null,release:null};
         const active=run;
@@ -90,10 +105,12 @@ export function createOtiumServer({ headless = false, browserChannel = 'chrome',
         return send(202,publicState());
       }
       if (path === '/api/review') {
+        if(transport==='chrome') return chromeQueue.review() ? send(200,publicState()) : send(409,{error:'Wait for the batch to finish.'});
         if (run?.status!=='ready' || !run.release) return send(409,{error:'Wait for the batch to finish.'});
         await run.release(); run.release=null; run.status='reviewing'; return send(200,publicState());
       }
       if (path === '/api/close') {
+        if(transport==='chrome') return chromeQueue.close() ? send(200,publicState()) : send(409,{error:'Wait for preparation to finish before closing the batch.'});
         if (run?.status==='running') return send(409,{error:'Wait for preparation to finish before closing the batch.'});
         if (run) run.status='closed';
         await browser?.close(); browser=null; return send(200,publicState());

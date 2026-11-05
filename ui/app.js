@@ -10,11 +10,17 @@ function node(tag,cls,text){const element=document.createElement(tag);if(cls)ele
 function render(next){
  state=next; const stamp=JSON.stringify(next);if(stamp===signature)return;signature=stamp;
  const active=['running','ready','reviewing'].includes(next.status);
+ const regular=next.transport==='chrome-extension';
+ $('chrome-setup').hidden=!regular;
+ $('chrome-connection').textContent=next.chromeConnected?'Regular Chrome connected':'Chrome companion not connected';
+ $('chrome-help').hidden=Boolean(next.chromeConnected);
+ $('workflow-options').hidden=regular;
+ $('resume-help').textContent=regular?'Stages the selected PDF in a recognized resume field. Verify the attachment before submitting.':'Used only by an explicitly configured upload step.';
  $('prepare').disabled=active||busy;$('demo').disabled=active||busy;$('empty-demo').disabled=active||busy;
  $('status').textContent=({idle:'Ready to start',running:'Preparing…',ready:'Ready for review',reviewing:'Manual review enabled',closed:'Batch closed',error:'Needs attention'})[next.status]||next.status;
  $('empty').hidden=active||next.results.length>0;
  $('progress').hidden=next.status!=='running';
- $('progress-text').textContent=next.progress ? `Preparing application ${Math.min(next.progress.done+1,next.progress.total)} of ${next.progress.total}. Chrome opens separately.`:'Starting Chrome…';
+ $('progress-text').textContent=next.progress ? `Preparing application ${Math.min(next.progress.done+1,next.progress.total)} of ${next.progress.total}. ${regular?'Workers are using your regular Chrome.':'Chrome opens separately.'}`:'Starting browser workers…';
  $('progress-bar').max=next.progress?.total||1;$('progress-bar').value=next.progress?.done||0;
  $('handoff').hidden=!['ready','reviewing'].includes(next.status);
  $('review').hidden=next.status==='reviewing';
@@ -42,7 +48,7 @@ async function start(demo){
  try{
   let payload={demo:true};
   if(!demo){
-   const advanced=$('workflow').value.trim();
+   const advanced=state.transport==='chrome-extension'?'':$('workflow').value.trim();
    const jobs=advanced?JSON.parse(advanced):$('jobs').value.split(/\n/).map(s=>s.trim()).filter(Boolean).map((url,i)=>({id:'application-'+(i+1),url}));
    const answers=Object.fromEntries(profileKeys.map(k=>[k,$(k).value.trim()]).filter(([,v])=>v));
    const customAnswers=$('answers').value.trim()?JSON.parse($('answers').value):{};

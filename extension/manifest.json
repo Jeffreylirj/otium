@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Otium Chrome Companion",
+  "version": "0.1.0",
+  "minimum_chrome_version": "120",
+  "description": "Prepare Otium batches in your regular Chrome tabs, with final submission left to you.",
+  "permissions": ["scripting", "storage", "alarms", "declarativeNetRequest"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "optional_host_permissions": ["https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "Otium", "default_popup": "popup.html" },
+  "content_scripts": [{ "matches": ["http://127.0.0.1/*"], "js": ["bridge.js"], "run_at": "document_idle" }]
+}
